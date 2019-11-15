@@ -2,12 +2,16 @@ from functools import partial
 from unittest.mock import Mock, patch
 
 
+class PatchingError(Exception):
+    pass
+
+
 class patch_requests(object):
     methods = ['get', 'post', 'put', 'patch', 'delete']
 
     def __init__(self, responses):
-        self.responses = responses
-        self.side_effect_results = (o for o in responses)
+        self.responses = list(responses)
+        self._counter = 0
 
     def build_mocked_response(self, data):
         status_code, resp = data
@@ -27,10 +31,19 @@ class patch_requests(object):
 
     def __enter__(self):
         def side_effect(_actual_http_method, *args, **kwargs):
-            expected_method, result = next(self.side_effect_results)
-            assert expected_method.lower() == _actual_http_method, (
-                f'Expected method {expected_method.upper()}, '
-                f'got {_actual_http_method.upper()}')
+            if self._counter >= len(self.responses):
+                raise PatchingError(
+                    'Unexpeced amount of requests (latest was '
+                    f'{_actual_http_method.upper()} with '
+                    f'args: {args} and kwargs: {kwargs})')
+            expected_method, result = self.responses[self._counter]
+            self._counter += 1
+
+            if expected_method.lower() != _actual_http_method:
+                raise PatchingError(
+                    f'Expected method {expected_method.upper()}, '
+                    f'got {_actual_http_method.upper()}')
+
             return self.build_mocked_response(result)
 
         for method in self.methods:
@@ -46,7 +59,10 @@ class patch_requests(object):
             mocked_method_call.side_effect = partial(side_effect, method)
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, exc_type, *exc):
+        if exc_type == PatchingError:
+            return
+
         for method in self.methods:
             getattr(self, f'{method}_requests_patcher').stop()
             getattr(self, f'{method}_session_patcher').stop()
