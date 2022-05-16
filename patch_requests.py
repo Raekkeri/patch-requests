@@ -1,3 +1,4 @@
+import os.path
 from functools import partial
 from unittest.mock import Mock, patch
 
@@ -7,10 +8,11 @@ class PatchingError(Exception):
 
 
 class patch_requests(object):
-    methods = ['get', 'post', 'put', 'patch', 'delete']
+    methods = ['get', 'post', 'put', 'patch', 'delete', 'request']
 
-    def __init__(self, responses):
+    def __init__(self, responses, record=None):
         self.responses = list(responses)
+        self.record = record
         self._counter = 0
 
     def build_mocked_response(self, data):
@@ -30,7 +32,7 @@ class patch_requests(object):
         return mocked
 
     def __enter__(self):
-        def side_effect(_actual_http_method, *args, **kwargs):
+        def mock_side_effect(_actual_http_method, *args, **kwargs):
             if self._counter >= len(self.responses):
                 raise PatchingError(
                     'Unexpeced amount of requests (latest was '
@@ -46,7 +48,27 @@ class patch_requests(object):
 
             return self.build_mocked_response(result)
 
-        for method in self.methods:
+        def record_side_effect(_actual_http_method, *args, **kwargs):
+            getattr(self, f'{_actual_http_method}_requests_patcher').stop()
+            getattr(self, f'{_actual_http_method}_session_patcher').stop()
+            self._counter += 1
+
+            import requests
+            import datetime
+
+            response = getattr(requests, _actual_http_method)(*args, **kwargs)
+
+            with open(os.path.join(self.record, (
+                    f'{_actual_http_method}-'
+                    + datetime.datetime.now().strftime('%Y%m%d-%H%M%S%f')
+                    + f'-{self._counter}'
+                    + '.txt')), 'w') as f:
+                f.write(response.text)
+
+            start_patchers(_actual_http_method)
+            return response
+
+        def start_patchers(method):
             requests_patcher = patch(f'requests.{method}')
             mocked_method_call = requests_patcher.start()
             session_patcher = patch(
@@ -56,7 +78,14 @@ class patch_requests(object):
             setattr(self, f'{method}_requests_patcher', requests_patcher)
             setattr(self, f'{method}_session_patcher', session_patcher)
             setattr(self, f'mocked_{method}', mocked_method_call)
-            mocked_method_call.side_effect = partial(side_effect, method)
+
+            if self.record:
+                mocked_method_call.side_effect = partial(record_side_effect, method)
+            else:
+                mocked_method_call.side_effect = partial(mock_side_effect, method)
+
+        for method in self.methods:
+            start_patchers(method)
         return self
 
     def __exit__(self, exc_type, *exc):
@@ -66,6 +95,10 @@ class patch_requests(object):
         for method in self.methods:
             getattr(self, f'{method}_requests_patcher').stop()
             getattr(self, f'{method}_session_patcher').stop()
+
+            if self.record:
+                continue
+
             actual_call_count = getattr(
                 self, 'mocked_{}'.format(method)).call_count
             expected_calls = filter(
