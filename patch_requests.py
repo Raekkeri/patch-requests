@@ -34,10 +34,13 @@ class patch_requests(object):
     def __enter__(self):
         def mock_side_effect(_actual_http_method, *args, **kwargs):
             if self._counter >= len(self.responses):
-                raise PatchingError(
-                    'Unexpeced amount of requests (latest was '
-                    f'{_actual_http_method.upper()} with '
-                    f'args: {args} and kwargs: {kwargs})')
+                if self.record:
+                    return record(_actual_http_method, *args, **kwargs)
+                else:
+                    raise PatchingError(
+                        'Unexpeced amount of requests (latest was '
+                        f'{_actual_http_method.upper()} with '
+                        f'args: {args} and kwargs: {kwargs})')
             expected_method, result = self.responses[self._counter]
             self._counter += 1
 
@@ -48,7 +51,7 @@ class patch_requests(object):
 
             return self.build_mocked_response(result)
 
-        def record_side_effect(_actual_http_method, *args, **kwargs):
+        def record(_actual_http_method, *args, **kwargs):
             getattr(self, f'{_actual_http_method}_requests_patcher').stop()
             getattr(self, f'{_actual_http_method}_session_patcher').stop()
             self._counter += 1
@@ -79,10 +82,7 @@ class patch_requests(object):
             setattr(self, f'{method}_session_patcher', session_patcher)
             setattr(self, f'mocked_{method}', mocked_method_call)
 
-            if self.record:
-                mocked_method_call.side_effect = partial(record_side_effect, method)
-            else:
-                mocked_method_call.side_effect = partial(mock_side_effect, method)
+            mocked_method_call.side_effect = partial(mock_side_effect, method)
 
         for method in self.methods:
             start_patchers(method)
