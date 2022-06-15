@@ -3,10 +3,14 @@ from setuptools import find_packages, setup
 with open('README.md', 'r') as fh:
     long_description = fh.read()
 
+
+VERSION = '0.2.0'
+
+
 setup(
     name='patch-requests',
     zip_safe=False,
-    version='0.2.0',
+    version=VERSION,
     description=('Simple patching of `requests` calls'),
     long_description=long_description,
     long_description_content_type='text/markdown',
