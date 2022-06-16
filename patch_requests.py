@@ -1,6 +1,9 @@
+import json
 import os.path
 from functools import partial
 from unittest.mock import Mock, patch
+
+from requests import Response
 
 
 class PatchingError(Exception):
@@ -10,26 +13,33 @@ class PatchingError(Exception):
 class patch_requests(object):
     methods = ['get', 'post', 'put', 'patch', 'delete', 'request']
 
-    def __init__(self, responses, record=None):
-        self.responses = list(responses)
+    def __init__(self, responses=None, record=None):
+        responses = responses or []
+
+        if isinstance(responses, str):
+            self.responses = load_responses_from_dir(responses)
+        else:
+            self.responses = list(responses)
         self.record = record
         self._counter = 0
 
     def build_mocked_response(self, data):
         status_code, resp = data
-        mocked = Mock(status_code=status_code)
+
+        response = Response()
+        response.status_code = status_code
 
         if isinstance(resp, str):
-            mocked.text = resp
+            response._content = resp.encode()
         elif isinstance(resp, bytes):
-            mocked.content = resp
+            response._content = resp
         elif isinstance(resp, (dict, list)):
-            mocked.json.return_value = resp
+            response._content = json.dumps(resp).encode()
         else:
             raise NotImplementedError(
                 f'Cannot build mocked response for type {resp.__class__}')
 
-        return mocked
+        return response
 
     def __enter__(self):
         def mock_side_effect(_actual_http_method, *args, **kwargs):
@@ -66,6 +76,8 @@ class patch_requests(object):
                     + datetime.datetime.now().strftime('%Y%m%d-%H%M%S%f')
                     + f'-{self._counter}'
                     + '.txt')), 'w') as f:
+                f.write(f'{_actual_http_method}\nargs={args}\nkwargs={kwargs}\n')
+                f.write(f'{response.status_code}\n')
                 f.write(response.text)
 
             start_patchers(_actual_http_method)
@@ -111,3 +123,19 @@ class patch_requests(object):
 
         self.mocks = {method: getattr(self, f'mocked_{method}')
                       for method in self.methods}
+
+
+def load_responses_from_dir(_dir):
+    ret = []
+    files = sorted(os.listdir(_dir))
+    files = (f for f in files if f.endswith('.txt'))
+    for file in files:
+        print('reading', file)
+        with open(os.path.join(_dir, file)) as f:
+            lines = f.readlines()
+            assert len(lines) == 5
+            method = lines[0].strip()
+            status_code = int(lines[3])
+            data = lines[4].strip()
+            ret.append((method, (status_code, data)))
+    return ret
