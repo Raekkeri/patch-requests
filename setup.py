@@ -4,7 +4,7 @@ with open('README.md', 'r') as fh:
     long_description = fh.read()
 
 
-VERSION = '0.3.0'
+VERSION = '0.3.1'
 
 
 setup(
